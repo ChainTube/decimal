@@ -1,5 +1,70 @@
 # decimal
 
+## fork description
+This is a fork of [shopspring/decimal](https://github.com/shopspring/decimal)
+with the following changes:
+
+- added serialization for [GORM](https://gorm.io/) database driver
+- added serialization for [GraphQL](https://github.com/99designs/gqlgen)
+
+The official `decimal` library converts to string before writing to database. This
+string can then be stored as `VARCHAR` or `NUMERIC` (fixed decimal) or `DOUBLE` (floating point).
+
+The best way to store decimals is as `BIGINT` because:
+- it is exact (not like floating point)
+- it allows us to do number comparisons in DB (for range queries)
+- it is smaller & faster than `NUMERIC`:
+
+  `NUMERIC`: 2 bytes per 4 decimal digits + 3-8 bytes overhead, slow on queries
+
+  `REAL`: 4 bytes with 6 decimals, double 8 bytes with 15 decimals, not exact
+
+  `BIGINT`: 8 bytes + fast queries on this column
+
+  Reference: https://www.postgresql.org/docs/9.3/datatype-numeric.html
+
+
+### example
+This is an example of: Decimal -> write BIGINT -> read BIGINT -> Decimal
+
+Short version (using ORM):
+```go
+receipt := &model.Receipt{
+		Amount:      decimal.NewFromFloat32(12.345678901),
+		Price:       decimal.NewFromInt(5434531),
+	}
+
+// GORM store() automatically converts Decimal -> BIGINT	
+tx := db.DB.Create(receipt)
+
+// when reading the value back: GORM automatically converts BIGINT -> Decimal
+tx := db.DB.Where("id = ?", receipt.ID).First(receipt)
+```
+
+Using raw queries:
+```go
+dec := decimal.NewFromFloat32(12.34567)
+
+// use the ToShiftedInt() function to convert Decimal -> BIGINT	
+db.DB.Exec("UPDATE my_table SET price = ?", dec.ToShiftedInt())
+
+// when reading the value back using Scan(): GORM automatically converts BIGINT -> Decimal
+// There is also NewFromShiftedInt() if you manually need to create a decimal from a raw DB value.
+type PriceExample struct {
+    Price decimal.Decimal
+    OtherField interface{}
+}
+var priceRes PriceExample
+db.DB.Raw("SELECT price, other_field FROM my_table WHERE id = ?", id).Scan(&priceRes)
+```
+
+Notice how we did not have to do any decimal shifting ourselves - this package automatically does it.
+
+#### Considerations
+The max value of `BIGINT` in Postgres has 19 digits, so when using 15 decimals (like `DOUBLE PRECISION`)
+the maximum value of  this fixed-decimal struct is `9223.(15 decimals)`.
+You can configure it to use fewer decimals (default is 8) to store bigger numbers.
+
 [![Github Actions](https://github.com/shopspring/decimal/actions/workflows/ci.yml/badge.svg)](https://github.com/shopspring/decimal/actions/workflows/ci.yml)
 [![GoDoc](https://godoc.org/github.com/shopspring/decimal?status.svg)](https://godoc.org/github.com/shopspring/decimal) 
 [![Go Report Card](https://goreportcard.com/badge/github.com/shopspring/decimal)](https://goreportcard.com/report/github.com/shopspring/decimal)
@@ -31,7 +96,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/shopspring/decimal"
+	"github.com/ChainTube/decimal"
 )
 
 func main() {

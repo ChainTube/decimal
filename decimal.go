@@ -20,6 +20,7 @@ import (
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
+	"github.com/ChainTube/decimal/number"
 	"math"
 	"math/big"
 	"regexp"
@@ -81,13 +82,28 @@ type Decimal struct {
 	// could make exp a *big.Int but it would hurt performance and numbers
 	// like that are unrealistic.
 	exp int32
+
+	// How many decimals to shift when storing this number as integer in Database.
+	// This is only used for storing in database - all calculations in Go still use max precision.
+	decimalsShift int
 }
 
 // New returns a new fixed-point decimal, value * 10 ^ exp.
 func New(value int64, exp int32) Decimal {
 	return Decimal{
-		value: big.NewInt(value),
-		exp:   exp,
+		value:         big.NewInt(value),
+		exp:           exp,
+		decimalsShift: shiftStorageDecimals,
+	}
+}
+
+// NewWithSift returns a new fixed-point decimal, value * 10 ^ exp.
+// It uses decShift decimals to store the value as int.
+func NewWithSift(value int64, exp int32, decShift int) Decimal {
+	return Decimal{
+		value:         big.NewInt(value),
+		exp:           exp,
+		decimalsShift: decShift,
 	}
 }
 
@@ -99,8 +115,9 @@ func New(value int64, exp int32) Decimal {
 //     NewFromInt(-10).String() // output: "-10"
 func NewFromInt(value int64) Decimal {
 	return Decimal{
-		value: big.NewInt(value),
-		exp:   0,
+		value:         big.NewInt(value),
+		exp:           0,
+		decimalsShift: shiftStorageDecimals,
 	}
 }
 
@@ -112,16 +129,18 @@ func NewFromInt(value int64) Decimal {
 //     NewFromInt(-10).String() // output: "-10"
 func NewFromInt32(value int32) Decimal {
 	return Decimal{
-		value: big.NewInt(int64(value)),
-		exp:   0,
+		value:         big.NewInt(int64(value)),
+		exp:           0,
+		decimalsShift: shiftStorageDecimals,
 	}
 }
 
 // NewFromBigInt returns a new Decimal from a big.Int, value * 10 ^ exp
 func NewFromBigInt(value *big.Int, exp int32) Decimal {
 	return Decimal{
-		value: new(big.Int).Set(value),
-		exp:   exp,
+		value:         new(big.Int).Set(value),
+		exp:           exp,
+		decimalsShift: shiftStorageDecimals,
 	}
 }
 
@@ -200,8 +219,9 @@ func NewFromString(value string) (Decimal, error) {
 	}
 
 	return Decimal{
-		value: dValue,
-		exp:   int32(exp),
+		value:         dValue,
+		exp:           int32(exp),
+		decimalsShift: shiftStorageDecimals,
 	}, nil
 }
 
@@ -316,12 +336,20 @@ func newFromFloat(val float64, bits uint64, flt *floatInfo) Decimal {
 		if d.neg {
 			tmp *= -1
 		}
-		return Decimal{value: big.NewInt(tmp), exp: int32(d.dp) - int32(d.nd)}
+		return Decimal{
+			value:         big.NewInt(tmp),
+			exp:           int32(d.dp) - int32(d.nd),
+			decimalsShift: shiftStorageDecimals,
+		}
 	}
 	dValue := new(big.Int)
 	dValue, ok := dValue.SetString(string(d.d[:d.nd]), 10)
 	if ok {
-		return Decimal{value: dValue, exp: int32(d.dp) - int32(d.nd)}
+		return Decimal{
+			value:         dValue,
+			exp:           int32(d.dp) - int32(d.nd),
+			decimalsShift: shiftStorageDecimals,
+		}
 	}
 
 	return NewFromFloatWithExponent(val, int32(d.dp)-int32(d.nd))
@@ -409,8 +437,9 @@ func NewFromFloatWithExponent(value float64, exp int32) Decimal {
 	}
 
 	return Decimal{
-		value: dMant,
-		exp:   exp,
+		value:         dMant,
+		exp:           exp,
+		decimalsShift: shiftStorageDecimals,
 	}
 }
 
@@ -418,8 +447,9 @@ func NewFromFloatWithExponent(value float64, exp int32) Decimal {
 func (d Decimal) Copy() Decimal {
 	d.ensureInitialized()
 	return Decimal{
-		value: &(*d.value),
-		exp:   d.exp,
+		value:         &(*d.value),
+		exp:           d.exp,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -448,8 +478,9 @@ func (d Decimal) rescale(exp int32) Decimal {
 
 	if d.exp == exp {
 		return Decimal{
-			new(big.Int).Set(d.value),
-			d.exp,
+			value:         new(big.Int).Set(d.value),
+			exp:           d.exp,
+			decimalsShift: d.decimalsShift,
 		}
 	}
 
@@ -465,8 +496,9 @@ func (d Decimal) rescale(exp int32) Decimal {
 	}
 
 	return Decimal{
-		value: value,
-		exp:   exp,
+		value:         value,
+		exp:           exp,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -478,8 +510,9 @@ func (d Decimal) Abs() Decimal {
 	d.ensureInitialized()
 	d2Value := new(big.Int).Abs(d.value)
 	return Decimal{
-		value: d2Value,
-		exp:   d.exp,
+		value:         d2Value,
+		exp:           d.exp,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -489,8 +522,9 @@ func (d Decimal) Add(d2 Decimal) Decimal {
 
 	d3Value := new(big.Int).Add(rd.value, rd2.value)
 	return Decimal{
-		value: d3Value,
-		exp:   rd.exp,
+		value:         d3Value,
+		exp:           rd.exp,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -500,8 +534,9 @@ func (d Decimal) Sub(d2 Decimal) Decimal {
 
 	d3Value := new(big.Int).Sub(rd.value, rd2.value)
 	return Decimal{
-		value: d3Value,
-		exp:   rd.exp,
+		value:         d3Value,
+		exp:           rd.exp,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -510,8 +545,9 @@ func (d Decimal) Neg() Decimal {
 	d.ensureInitialized()
 	val := new(big.Int).Neg(d.value)
 	return Decimal{
-		value: val,
-		exp:   d.exp,
+		value:         val,
+		exp:           d.exp,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -529,8 +565,9 @@ func (d Decimal) Mul(d2 Decimal) Decimal {
 
 	d3Value := new(big.Int).Mul(d.value, d2.value)
 	return Decimal{
-		value: d3Value,
-		exp:   int32(expInt64),
+		value:         d3Value,
+		exp:           int32(expInt64),
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -541,8 +578,9 @@ func (d Decimal) Mul(d2 Decimal) Decimal {
 func (d Decimal) Shift(shift int32) Decimal {
 	d.ensureInitialized()
 	return Decimal{
-		value: new(big.Int).Set(d.value),
-		exp:   d.exp + shift,
+		value:         new(big.Int).Set(d.value),
+		exp:           d.exp + shift,
+		decimalsShift: d.decimalsShift,
 	}
 }
 
@@ -592,8 +630,16 @@ func (d Decimal) QuoRem(d2 Decimal, precision int32) (Decimal, Decimal) {
 	}
 	var q, r big.Int
 	q.QuoRem(&aa, &bb, &r)
-	dq := Decimal{value: &q, exp: scale}
-	dr := Decimal{value: &r, exp: scalerest}
+	dq := Decimal{
+		value:         &q,
+		exp:           scale,
+		decimalsShift: d.decimalsShift,
+	}
+	dr := Decimal{
+		value:         &r,
+		exp:           scalerest,
+		decimalsShift: d.decimalsShift,
+	}
 	return dq, dr
 }
 
@@ -611,7 +657,11 @@ func (d Decimal) DivRound(d2 Decimal, precision int32) Decimal {
 	rv2.Abs(r.value)
 	rv2.Lsh(&rv2, 1)
 	// now rv2 = abs(r.value) * 2
-	r2 := Decimal{value: &rv2, exp: r.exp + precision}
+	r2 := Decimal{
+		value:         &rv2,
+		exp:           r.exp + precision,
+		decimalsShift: d.decimalsShift,
+	}
 	// r2 is now 2 * r * 10 ^ precision
 	var c = r2.Cmp(d2.Abs())
 
@@ -662,7 +712,11 @@ func (d Decimal) ExpHullAbrham(overallPrecision uint32) (Decimal, error) {
 	// Algorithm based on Variable precision exponential function.
 	// ACM Transactions on Mathematical Software by T. E. Hull & A. Abrham.
 	if d.IsZero() {
-		return Decimal{oneInt, 0}, nil
+		return Decimal{
+			value:         oneInt,
+			exp:           0,
+			decimalsShift: d.decimalsShift,
+		}, nil
 	}
 
 	currentPrecision := overallPrecision
@@ -684,7 +738,11 @@ func (d Decimal) ExpHullAbrham(overallPrecision uint32) (Decimal, error) {
 	// Return 1 if abs(d) small enough; this also avoids later over/underflow
 	overflowThreshold2 := New(9, -int32(currentPrecision)-1)
 	if d.Abs().Cmp(overflowThreshold2) <= 0 {
-		return Decimal{oneInt, d.exp}, nil
+		return Decimal{
+			value:         oneInt,
+			exp:           d.exp,
+			decimalsShift: d.decimalsShift,
+		}, nil
 	}
 
 	// t is the smallest integer >= 0 such that the corresponding abs(d/k) < 1
@@ -694,9 +752,13 @@ func (d Decimal) ExpHullAbrham(overallPrecision uint32) (Decimal, error) {
 		t = 0
 	}
 
-	k := New(1, t)                                     // reduction factor
-	r := Decimal{new(big.Int).Set(d.value), d.exp - t} // reduced argument
-	p := int32(currentPrecision) + t + 2               // precision for calculating the sum
+	k := New(1, t) // reduction factor
+	r := Decimal{
+		value:         new(big.Int).Set(d.value),
+		exp:           d.exp - t,
+		decimalsShift: d.decimalsShift,
+	} // reduced argument
+	p := int32(currentPrecision) + t + 2 // precision for calculating the sum
 
 	// Determine n, the number of therms for calculating sum
 	// use first Newton step (1.435p - 1.182) / log10(p/abs(r))
@@ -759,7 +821,11 @@ func (d Decimal) ExpHullAbrham(overallPrecision uint32) (Decimal, error) {
 func (d Decimal) ExpTaylor(precision int32) (Decimal, error) {
 	// Note(mwoss): Implementation can be optimized by exclusively using big.Int API only
 	if d.IsZero() {
-		return Decimal{oneInt, 0}.Round(precision), nil
+		return Decimal{
+			value:         oneInt,
+			exp:           0,
+			decimalsShift: d.decimalsShift,
+		}.Round(precision), nil
 	}
 
 	var epsilon Decimal
@@ -1000,6 +1066,13 @@ func (d Decimal) Rat() *big.Rat {
 // For more details, see the documentation for big.Rat.Float64
 func (d Decimal) Float64() (f float64, exact bool) {
 	return d.Rat().Float64()
+}
+
+// Float32 returns the nearest float32 value for d and a bool indicating
+// whether f represents d exactly.
+// For more details, see the documentation for big.Rat.Float32
+func (d Decimal) Float32() (f float32, exact bool) {
+	return d.Rat().Float32()
 }
 
 // InexactFloat64 returns the nearest float64 value for d.
@@ -1421,7 +1494,32 @@ func (d *Decimal) Scan(value interface{}) error {
 
 // Value implements the driver.Valuer interface for database serialization.
 func (d Decimal) Value() (driver.Value, error) {
-	return d.String(), nil
+	//return d.String(), nil
+
+	valueFloat, _ := d.Float64()
+	valueInt := number.ShiftFloatToInt(valueFloat, d.decimalsShift)
+	return valueInt, nil
+}
+
+// NewFromShiftedInt returns a new Decimal from a shifted integer.
+// Useful when reading numbers from database with raw queries.
+func NewFromShiftedInt(nr int64) (Decimal, error) {
+	dec := NewFromFloat32(float32(number.ShiftIntToFloat(nr, shiftStorageDecimals)))
+	return dec, nil
+}
+
+// NewFromFloat32 returns a new Decimal from a shifted integer with given number of decimals to shift.
+// Useful when reading numbers from database with raw queries.
+func NewFromShiftedIntWithShiftCount(nr int64, shiftCount int) (Decimal, error) {
+	dec := NewFromFloat32(float32(number.ShiftIntToFloat(nr, shiftCount)))
+	return dec, nil
+}
+
+// ToShiftedInt returns an integer of this value with decimals shifted according to its
+// decimalsShift setting. Useful when writing numbers to database with raw queries.
+func (d Decimal) ToShiftedInt() int64 {
+	valueFloat, _ := d.Float64()
+	return number.ShiftFloatToInt(valueFloat, d.decimalsShift)
 }
 
 // UnmarshalText implements the encoding.TextUnmarshaler interface for XML

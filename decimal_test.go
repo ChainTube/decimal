@@ -2456,13 +2456,14 @@ func TestDecimal_Value(t *testing.T) {
 	}
 
 	// check that normal case is handled appropriately
-	a := New(1234, -2)
-	expected := "12.34"
+	a := NewWithSift(1234, -2, 2)
+	//expected := "12.34"
+	expected := int64(1234)
 	value, err := a.Value()
 	if err != nil {
 		t.Errorf("Decimal(12.34).Value() failed with message: %s", err)
-	} else if value.(string) != expected {
-		t.Errorf("%s does not equal to %s", a, expected)
+	} else if value.(int64) != expected {
+		t.Errorf("%s does not equal to %d", a, expected)
 	}
 }
 
@@ -2969,12 +2970,14 @@ func TestNullDecimal_Value(t *testing.T) {
 	}
 
 	// check that normal case is handled appropriately
-	a := NullDecimal{Decimal: New(1234, -2), Valid: true}
-	expected := "12.34"
+	//a := NullDecimal{Decimal: New(1234, -2), Valid: true}
+	a := NullDecimal{Decimal: NewWithSift(1234, -2, 2), Valid: true}
+	//expected := "12.34"
+	expected := int64(1234)
 	value, err = a.Value()
 	if err != nil {
 		t.Errorf("NullDecimal(12.34).Value() failed with message: %s", err)
-	} else if value.(string) != expected {
+	} else if value.(int64) != expected {
 		t.Errorf("%v does not equal %v", a, expected)
 	}
 }
