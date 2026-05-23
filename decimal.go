@@ -1487,6 +1487,15 @@ func (d Decimal) Float64() (f float64, exact bool) {
 	return d.Rat().Float64()
 }
 
+// Float32 returns the nearest float32 value for d and a bool indicating
+// whether f represents d exactly.
+// For more details, see the documentation for big.Rat.Float32
+//
+// Fork-specific: not present in upstream shopspring/decimal.
+func (d Decimal) Float32() (f float32, exact bool) {
+	return d.Rat().Float32()
+}
+
 // InexactFloat64 returns the nearest float64 value for d.
 // It doesn't indicate if the returned value represents d exactly.
 func (d Decimal) InexactFloat64() float64 {
